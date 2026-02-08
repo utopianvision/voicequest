@@ -83,7 +83,7 @@ export function Dashboard() {
             <div className="flex flex-wrap justify-center md:justify-start gap-3 pt-2">
               <Button
                 onClick={toggleListening}
-                className="bg-white text-indigo-600 hover:bg-indigo-50 border-none shadow-lg"
+                className="bg-indigo-600 text-indigo-600 hover:bg-indigo-50 border-none shadow-lg"
                 size="lg">
 
                 {isListening ?
