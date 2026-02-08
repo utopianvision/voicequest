@@ -13,7 +13,7 @@ VoiceQuest is an accessible, voice‑controlled gamified learning app built for 
 | Voice Control       | Capture user speech with the Web Speech API and respond with natural audio using ElevenLabs TTS.      |
 | Gamified Quests     | Transform assignment metadata into meaningful, structured study quests with XP, levels, and progress. |
 | Persistent Progress | Track user XP, streaks, completed quests, and achievements using SQLite.                              |
-| Adaptive Content    | Use **OpenAI’s GPT‑4‑turbo** to interpret voice commands and generate dynamic quest questions.        |
+| Adaptive Content    | Use **OpenAI’s GPT‑4o‑mini** to interpret voice commands and generate dynamic quest questions.        |
 
 ---
 
@@ -81,7 +81,7 @@ Make sure you have the following installed:
 ## 🧪 How It Works
 
 * React captures spoken input via the Web Speech API.
-* The backend receives voice transcripts and uses **OpenAI GPT‑4‑turbo** to generate tailored quests based on assignment metadata.
+* The backend receives voice transcripts and uses **OpenAI GPT‑4o-mini** to generate tailored quests based on assignment metadata.
 * ElevenLabs TTS provides natural audio feedback, and SQLite persists user progress, achievements, and session state.
 
 ---
