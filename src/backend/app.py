@@ -1122,7 +1122,7 @@ def health():
 # --- Custom Quest Creation ---
 @app.route("/api/quests/custom", methods=["POST"])
 def create_custom_quest():
-    """Create a personalized quest based on the student's request."""
+    """Create a personalized quest based on the student's request, prioritizing subject content in assignments."""
     data = request.json
     user_id = data.get("user_id")
     topic = data.get("topic", "").strip()
@@ -1135,36 +1135,44 @@ def create_custom_quest():
     if not OPENAI_API_KEY:
         return jsonify({"message": "OpenAI API key not configured"}), 500
 
-    # Build context for quest generation
-    context_parts = [f"Student wants to study: {topic}"]
-    
-    # Add Canvas assignment context if available
+    # --- Build assignment context with neutral labels ---
+    assignment_context = ""
     if canvas_assignments:
-        # Find matching assignments
-        matching_assignments = []
-        topic_lower = topic.lower()
-        for assignment in canvas_assignments:
-            assignment_name = assignment.get("name", "").lower()
-            course_name = assignment.get("course_name", "").lower()
-            description = assignment.get("description", "").lower()
-            # Check if assignment matches the topic
-            if (topic_lower in assignment_name or 
-                topic_lower in course_name or 
-                topic_lower in description or
-                any(keyword in assignment_name for keyword in topic_lower.split() if len(keyword) > 3)):
-                matching_assignments.append(assignment)
-        
-        if matching_assignments:
-            assignment_info = "\n".join([
-                f"  - \"{a.get('name', 'Untitled')}\" (Course: {a.get('course_name', 'Unknown')}, Due: {a.get('due_at', 'No due date')})"
-                for a in matching_assignments[:3]  # Limit to 3 most relevant
-            ])
-            context_parts.append(f"\nRelevant Canvas assignments:\n{assignment_info}")
-            context_parts.append("\nIMPORTANT: Create questions SPECIFICALLY based on these actual assignments. Use the assignment names, course context, and descriptions to generate targeted questions. Do NOT create generic questions - make them relevant to the specific assignments listed above.")
+        assignment_context = "\nSTUDENT'S CANVAS ASSIGNMENTS (reference only):\n"
+        for idx, a in enumerate(canvas_assignments, start=1):
+            # Neutral assignment label to prevent AI from focusing on creative title
+            assignment_label = f"Assignment {idx} ({a.get('topic_category', 'General')})"
+            assignment_context += (
+                f"- {assignment_label}\n"
+                f"  Course: {a.get('course_name', 'Unknown')}\n"
+                f"  Subject: {a.get('topic_category', 'General')}\n"
+                f"  Due: {a.get('due_at', 'No due date')}\n"
+                f"  Description: {a.get('description', 'No description')[:300]}\n"
+            )
+        assignment_context += (
+            "\nIMPORTANT: These assignments are for context only. "
+            "Do NOT reference the assignment names or narrative styles in questions unless absolutely necessary for content. "
+            "All questions must test actual subject knowledge (e.g., AP Biology concepts, gene regulation, photosynthesis). "
+            "Avoid generic, procedural, or stylistic questions."
+        )
 
-    context_message = "\n".join(context_parts)
+    # --- System prompt for tutor ---
+    system_prompt = f"""
+You are a knowledgeable and encouraging tutor helping a student study: {topic}.
+{assignment_context}
 
-    # Generate quest metadata using AI
+RULES:
+- Ask clear, direct questions about {topic}.
+- Questions must test the actual subject content of the assignments, not the creative style, scenario, or assignment title.
+- When starting questions, begin with a subject-related phrase (e.g., "In AP Biology, ..." or "Regarding gene regulation, ...").
+- After each student response, evaluate correctness, give a brief explanation, and ask the next question.
+- Keep responses concise (2-3 sentences max) for voice-based delivery.
+- Be encouraging but honest.
+- Vary question types: definitions, problem-solving, conceptual understanding, applications.
+- Always align questions to the assignment subject(s) provided above.
+"""
+
+    # --- Generate quest metadata ---
     try:
         meta_response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
@@ -1177,7 +1185,7 @@ def create_custom_quest():
   "icon": "<single emoji that fits the topic>",
   "topic_category": "<one of: Science, Math, History, Literature, Geography, Technology, Language, Music, or the most fitting category>"
 }"""},
-                {"role": "user", "content": f"Create a quest about: {topic}\n\n{context_message}"}
+                {"role": "user", "content": f"Create a quest about: {topic}\n\n{assignment_context}"}
             ],
             max_tokens=150,
             temperature=0.5
@@ -1192,45 +1200,14 @@ def create_custom_quest():
     except Exception as e:
         return jsonify({"message": f"Failed to generate quest: {str(e)}"}), 500
 
-    # Build a direct, no-nonsense system prompt for the tutor
-    assignment_context = ""
-    if canvas_assignments:
-        matching_assignments = []
-        topic_lower = topic.lower()
-        for assignment in canvas_assignments:
-            assignment_name = assignment.get("name", "").lower()
-            course_name = assignment.get("course_name", "").lower()
-            description = assignment.get("description", "").lower()
-            if (topic_lower in assignment_name or 
-                topic_lower in course_name or 
-                topic_lower in description or
-                any(keyword in assignment_name for keyword in topic_lower.split() if len(keyword) > 3)):
-                matching_assignments.append(assignment)
-        
-        if matching_assignments:
-            assignment_details = "\n".join([
-                f"Assignment: \"{a.get('name', 'Untitled')}\" from {a.get('course_name', 'Unknown')}. Description: {a.get('description', 'No description')[:300]}"
-                for a in matching_assignments[:2]
-            ])
-            assignment_context = f"\n\nSTUDENT'S ACTUAL ASSIGNMENTS:\n{assignment_details}\n\nCRITICAL: Generate questions that directly relate to these specific assignments. Reference specific concepts, topics, or requirements from the assignments above. Do NOT create generic questions - make them specific to what the student actually needs to study for these assignments."
-    
-    system_prompt = f"""You are a knowledgeable and encouraging tutor helping a student study: {topic}.{assignment_context}
-
-IMPORTANT RULES:
-- Ask clear, direct questions about {topic}. No gimmicks, no role-playing, no word problems disguised as stories.
-- Questions should be appropriate for the difficulty level and directly test knowledge of {topic}.
-- If assignment context is provided above, create questions SPECIFICALLY tailored to those assignments.
-- After each student response, evaluate if they're correct, give a brief explanation, and ask the next question.
-- Keep responses concise (2-3 sentences max) since they'll be read aloud.
-- Be encouraging but honest. If the answer is wrong, explain the correct answer clearly.
-- Vary question types: definitions, problem-solving, conceptual understanding, applications."""
-
+    # --- Set XP and estimated time ---
     difficulty = meta.get("difficulty", "intermediate")
     xp_map = {"beginner": 50, "intermediate": 75, "advanced": 100}
     xp_reward = xp_map.get(difficulty, 75)
     time_map = {"beginner": 5, "intermediate": 7, "advanced": 10}
     est_minutes = time_map.get(difficulty, 7)
 
+    # --- Insert quest into DB ---
     db = get_db()
     try:
         db.execute(
@@ -1246,15 +1223,14 @@ IMPORTANT RULES:
         db.commit()
         quest_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
 
-        # Now start a session immediately
+        # --- Start quest session ---
         update_streak(db, user_id)
         session_id = str(uuid.uuid4())
 
-        # Generate first question
         first_response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": system_prompt + f"\n\nThis is a voice-based learning session with {num_questions} questions about {topic}. Start by briefly greeting the student and asking the FIRST question. Keep it concise (2-3 sentences max)."},
+                {"role": "system", "content": system_prompt + f"\n\nThis is a voice-based learning session with {num_questions} questions about {topic}. Start by briefly greeting the student and asking the FIRST question using a subject-focused phrase. Do NOT reference assignment titles."},
                 {"role": "user", "content": "Start the quest!"}
             ],
             max_tokens=200,
@@ -1270,7 +1246,7 @@ IMPORTANT RULES:
             (session_id, user_id, quest_id, json.dumps(messages), num_questions)
         )
 
-        # Create progress record
+        # --- Create progress record ---
         db.execute(
             "INSERT INTO user_quest_progress (user_id, quest_id, attempts, last_attempt) VALUES (?, ?, 1, ?)",
             (user_id, quest_id, datetime.now().isoformat())
@@ -1303,6 +1279,7 @@ IMPORTANT RULES:
         return jsonify({"message": f"Failed to create quest: {str(e)}"}), 500
     finally:
         db.close()
+
 
 
 # --- Canvas LMS Integration ---
